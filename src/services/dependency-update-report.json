@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-03-01T16:50:01.380Z",
+  "summary": {
+    "totalFiles": 1,
+    "updated": 0,
+    "noChanges": 1,
+    "errors": 0,
+    "skipped": 0,
+    "totalUpdates": 0
+  },
+  "results": [
+    {
+      "file": "package.json",
+      "status": "no_changes",
+      "updates": []
+    }
+  ]
+}

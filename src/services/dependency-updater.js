@@ -44,6 +44,7 @@ const logger = {
 
 // Create backup of a file
 function createBackup(filePath) {
+  return;
   if (!config.backupFiles) return;
   const backupPath = `${filePath}.backup-${Date.now()}`;
   fs.copyFileSync(filePath, backupPath);

@@ -1,6 +1,7 @@
 const axios = require("axios");
 const { scanDependencies } = require("./securityScanner");
-const { suggestFix } = require("./geminiService");
+// const { suggestFix } = require("./geminiService");
+const { fetchSecureDependencies, generateSecureFile } = require("./secureDependencies");
 require("dotenv").config();
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -75,7 +76,6 @@ async function fetchFileContent(owner, repo, path) {
     }
 }
 
-
 async function processRepo(repoUrl) {
     console.log(`🚀 Processing repository: ${repoUrl}`);
     
@@ -96,11 +96,13 @@ async function processRepo(repoUrl) {
     }
 
     const vulnerabilities = [];
+    const secureUpdates = [];
 
     for (const file of dependencyFiles) {
         console.log(`🔍 Scanning ${file.name}...`);
         
         try {
+            // Scan for vulnerabilities
             const fileVulnerabilities = await scanDependencies(file.name, file.content);
             console.log(`🔎 ${file.name} vulnerabilities:`, fileVulnerabilities);
             
@@ -108,22 +110,26 @@ async function processRepo(repoUrl) {
                 ...v,
                 file: file.name
             })));
+            
+            // Fetch secure versions for dependencies
+            const secureVersions = await fetchSecureDependencies(file.name, file.content);
+            console.log(`🔒 ${file.name} secure versions:`, secureVersions);
+            
+            // Generate updated file with secure dependencies
+            const updatedContent = generateSecureFile(file.name, file.content, secureVersions);
+            
+            secureUpdates.push({
+                file: file.name,
+                updates: secureVersions,
+                updatedContent
+            });
         } catch (err) {
             console.error(`❌ Error scanning ${file.name}:`, err.message);
         }
     }
     
     console.log(`🔒 Total vulnerabilities found: ${vulnerabilities.length}`);
-
-    if (vulnerabilities.length === 0) {
-        return {
-            repoUrl,
-            owner,
-            repo,
-            status: "secure",
-            message: "✅ No vulnerabilities found"
-        };
-    }
+    console.log(`🔄 Secure updates prepared: ${secureUpdates.length}`);
 
     const fixes = [];
 
@@ -142,9 +148,13 @@ async function processRepo(repoUrl) {
         repoUrl,
         owner,
         repo,
-        status: "vulnerable",
+        status: vulnerabilities.length > 0 ? "vulnerable" : "secure",
+        message: vulnerabilities.length > 0 
+            ? `❌ Found ${vulnerabilities.length} vulnerabilities` 
+            : "✅ No vulnerabilities found",
         vulnerabilities,
-        fixes
+        fixes,
+        secureUpdates
     };
 }
 

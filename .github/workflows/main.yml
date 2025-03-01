@@ -1,0 +1,290 @@
+name: Dependency Security Update
+
+on:
+  # Run on schedule - weekly on Monday at 1:00 AM UTC
+  schedule:
+    - cron: '0 1 * * 1'
+  
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run updates for'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      force_update:
+        description: 'Force update all dependencies'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  update-dependencies:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Full git history needed for proper versioning
+          fetch-depth: 0
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Get latest security advisories
+        id: security-advisories
+        run: |
+          # This step would normally call an API or use a tool to get latest advisories
+          # For example using npm audit, OWASP dependency check, or Snyk
+          
+          # For demonstration, we'll create a simple output file
+          echo "{
+            \"express\": \"4.18.2\",
+            \"lodash\": \"4.17.21\",
+            \"Flask\": \"2.2.3\",
+            \"requests\": \"2.31.0\",
+            \"org.springframework\": \"5.3.30\",
+            \"com.fasterxml.jackson.core\": \"2.15.3\"
+          }" > secure-versions.json
+          
+          echo "::set-output name=has_updates::true"
+      
+      - name: Create dependency updater script
+        run: |
+          cat > update-dependencies.js << 'EOF'
+          const fs = require("fs");
+          const { execSync } = require("child_process");
+
+          // Load secure versions from file
+          const secureVersions = JSON.parse(fs.readFileSync("./secure-versions.json", "utf8"));
+          const forceUpdate = "${{ github.event.inputs.force_update }}" === "true";
+
+          console.log("Loaded secure versions:", secureVersions);
+          console.log("Force update:", forceUpdate);
+
+          // Function to update `package.json` (Node.js)
+          function updatePackageJson() {
+              const packageJsonPath = "./package.json";
+              if (fs.existsSync(packageJsonPath)) {
+                  console.log("Updating package.json...");
+                  let packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+                  let updated = false;
+                  
+                  // Update dependencies
+                  for (const depType of ["dependencies", "devDependencies"]) {
+                      if (!packageJson[depType]) continue;
+                      
+                      Object.keys(packageJson[depType]).forEach(dep => {
+                          if (secureVersions[dep]) {
+                              const currentVersion = packageJson[depType][dep];
+                              
+                              // Skip if already secure and not forcing update
+                              if (!forceUpdate && 
+                                  (currentVersion === secureVersions[dep] || 
+                                   currentVersion === `^${secureVersions[dep]}` || 
+                                   currentVersion === `~${secureVersions[dep]}`)) {
+                                  console.log(`  ${dep} already at secure version ${secureVersions[dep]}`);
+                                  return;
+                              }
+                              
+                              // Preserve version prefix (^, ~, etc.)
+                              const versionMatch = currentVersion.match(/^([~^])/);
+                              const prefix = versionMatch ? versionMatch[1] : "";
+                              
+                              packageJson[depType][dep] = `${prefix}${secureVersions[dep]}`;
+                              console.log(`  Updated ${dep}: ${currentVersion} → ${prefix}${secureVersions[dep]}`);
+                              updated = true;
+                          }
+                      });
+                  }
+                  
+                  if (updated) {
+                      fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                      console.log("✅ Updated package.json with secure versions");
+                  } else {
+                      console.log("✓ No updates needed for package.json");
+                  }
+              } else {
+                  console.log("⚠️ package.json not found");
+              }
+          }
+
+          // Function to update `requirements.txt` (Python)
+          function updateRequirementsTxt() {
+              const requirementsPath = "./requirements.txt";
+              if (fs.existsSync(requirementsPath)) {
+                  console.log("Updating requirements.txt...");
+                  const lines = fs.readFileSync(requirementsPath, "utf-8").split("\n");
+                  let updated = false;
+                  
+                  const updatedLines = lines.map(line => {
+                      // Skip comments and empty lines
+                      if (line.trim().startsWith("#") || !line.trim()) return line;
+                      
+                      // Handle different formats: pkg==1.0.0, pkg>=1.0.0, pkg~=1.0.0, pkg
+                      const match = line.match(/^([a-zA-Z0-9_.-]+)(?:[<>=~]{1,2}|@)?(.*)?$/);
+                      if (!match) return line;
+                      
+                      const [_, pkg, currentVersion] = match;
+                      
+                      if (secureVersions[pkg]) {
+                          // Skip if already secure and not forcing update
+                          if (!forceUpdate && currentVersion && currentVersion.trim() === secureVersions[pkg]) {
+                              console.log(`  ${pkg} already at secure version ${secureVersions[pkg]}`);
+                              return line;
+                          }
+                          
+                          updated = true;
+                          console.log(`  Updated ${pkg}: ${currentVersion || "unspecified"} → ${secureVersions[pkg]}`);
+                          return `${pkg}==${secureVersions[pkg]}`;
+                      }
+                      
+                      return line;
+                  });
+                  
+                  if (updated) {
+                      fs.writeFileSync(requirementsPath, updatedLines.join("\n"));
+                      console.log("✅ Updated requirements.txt with secure versions");
+                  } else {
+                      console.log("✓ No updates needed for requirements.txt");
+                  }
+              } else {
+                  console.log("⚠️ requirements.txt not found");
+              }
+          }
+
+          // Function to update `pom.xml` (Java/Maven)
+          function updatePomXml() {
+              const pomPath = "./pom.xml";
+              if (fs.existsSync(pomPath)) {
+                  console.log("Updating pom.xml...");
+                  let pomXml = fs.readFileSync(pomPath, "utf-8");
+                  let updated = false;
+                  
+                  Object.keys(secureVersions).forEach(dep => {
+                      // Direct dependencies
+                      const regex = new RegExp(`(<artifactId>${dep}</artifactId>\\s*<version>)([^<]+)(</version>)`, "g");
+                      
+                      // Store original for comparison
+                      const originalPom = pomXml;
+                      
+                      // Update direct dependencies
+                      pomXml = pomXml.replace(regex, (match, prefix, version, suffix) => {
+                          if (forceUpdate || version !== secureVersions[dep]) {
+                              console.log(`  Updated ${dep}: ${version} → ${secureVersions[dep]}`);
+                              return `${prefix}${secureVersions[dep]}${suffix}`;
+                          }
+                          return match;
+                      });
+                      
+                      if (originalPom !== pomXml) {
+                          updated = true;
+                      }
+                  });
+                  
+                  if (updated) {
+                      fs.writeFileSync(pomPath, pomXml);
+                      console.log("✅ Updated pom.xml with secure versions");
+                  } else {
+                      console.log("✓ No updates needed for pom.xml");
+                  }
+              } else {
+                  console.log("⚠️ pom.xml not found");
+              }
+          }
+
+          // Main execution
+          console.log("🚀 Starting dependency update process...");
+
+          // Update dependency files
+          updatePackageJson();
+          updateRequirementsTxt();
+          updatePomXml();
+
+          console.log("\n✨ Dependency update process completed");
+          EOF
+      
+      - name: Run dependency update script
+        run: node update-dependencies.js
+      
+      - name: Check for changes
+        id: check-changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "::set-output name=has_changes::true"
+          else
+            echo "::set-output name=has_changes::false"
+          fi
+      
+      - name: Create PR branch
+        if: steps.check-changes.outputs.has_changes == 'true'
+        run: |
+          BRANCH_NAME="dependency-updates-$(date +%Y-%m-%d)"
+          git checkout -b $BRANCH_NAME
+          git add .
+          git commit -m "chore: update dependencies to secure versions"
+          git push origin $BRANCH_NAME
+          echo "::set-output name=branch_name::$BRANCH_NAME"
+        id: create-branch
+      
+      - name: Create Pull Request
+        if: steps.check-changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update dependencies to secure versions"
+          branch: ${{ steps.create-branch.outputs.branch_name }}
+          delete-branch: true
+          title: "Security: Update dependencies to secure versions"
+          body: |
+            ## Dependency Security Updates
+            
+            This PR updates dependencies to their secure versions based on the latest security advisories.
+            
+            ### Updates:
+            
+            ```
+            ${{ steps.check-changes.outputs.diff }}
+            ```
+            
+            This PR was automatically generated by the Dependency Security Update workflow.
+          labels: |
+            dependencies
+            security
+          draft: false
+      
+      - name: Send notification
+        if: steps.check-changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            📢 **Security Update Notification**

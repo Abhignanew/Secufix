@@ -1,6 +1,6 @@
 const axios = require("axios");
 const { scanDependencies } = require("./securityScanner");
-const { suggestFix } = require("./geminiService");
+// const { suggestFix } = require("./geminiService");
 require("dotenv").config();
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -127,16 +127,16 @@ async function processRepo(repoUrl) {
 
     const fixes = [];
 
-    for (const vulnerability of vulnerabilities) {
-        console.log(`🤖 Getting AI suggestion for ${vulnerability.package}@${vulnerability.version}...`);
+    // for (const vulnerability of vulnerabilities) {
+    //     console.log(`🤖 Getting AI suggestion for ${vulnerability.package}@${vulnerability.version}...`);
         
-        const suggestion = await suggestFix(vulnerability.package, vulnerability.version);
+    //     const suggestion = await suggestFix(vulnerability.package, vulnerability.version);
         
-        fixes.push({
-            vulnerability,
-            suggestion
-        });
-    }
+    //     fixes.push({
+    //         vulnerability,
+    //         suggestion
+    //     });
+    // }
 
     return {
         repoUrl,
@@ -144,7 +144,7 @@ async function processRepo(repoUrl) {
         repo,
         status: "vulnerable",
         vulnerabilities,
-        fixes
+        // fixes
     };
 }
 

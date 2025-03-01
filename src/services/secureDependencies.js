@@ -11,7 +11,7 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
  * Fetch the latest secure version of a package
  * @param {string} packageName - The name of the package
  * @param {string} currentVersion - The current version with vulnerability
- * @param {string} ecosystem - The package ecosystem (npm, pypi, etc.)
+ * @param {sactring} ecosystem - The package ecosystem (npm, pypi, etc.)
  * @returns {Promise<{secureVersion: string, updateCommand: string}>}
  */
 async function fetchSecureVersion(packageName, currentVersion, ecosystem = "npm") {

@@ -4,18 +4,23 @@
   "description": "DevSecOps Watchdog CLI and API",
   "main": "index.js",
   "bin": {
-    "repo-scan": "./bin/cli.js"
+    "repo-scan": "./bin/cli.js",
+    "package-scan": "./bin/localScanner.js"
   },
   "scripts": {
+    "preinstall": "node bin/localScanner.js",
     "start": "node src/index.js",
     "scan": "node bin/cli.js",
     "lint": "eslint .",
-    "test": "jest"
+    "test": "jest",
+    "postinstall": "echo 'Installation complete.'",
+    "check-deps": "node bin/localScanner.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.22.0",
     "axios": "^1.6.2",
     "body-parser": "^1.20.3",
     "commander": "^13.1.0",
@@ -23,6 +28,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "fs": "^0.0.1-security",
+    "lodash": "^4.17.0",
     "multer": "^1.4.5-lts.1",
     "ora": "^8.2.0",
     "path": "^0.12.7",

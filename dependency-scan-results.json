@@ -1,0 +1,12 @@
+{
+  "fileName": "package.json",
+  "summary": "SKIPPED - Security scanning not available",
+  "vulnerabilities": {
+    "high": [],
+    "medium": [],
+    "low": []
+  },
+  "recommendations": [
+    "Set up GEMINI_API_KEY in .env file for proper security scanning"
+  ]
+}

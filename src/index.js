@@ -1,148 +1,119 @@
-const express = require("express");
+const { program } = require("commander");
 const dotenv = require("dotenv");
-const cors = require("cors");
 const axios = require("axios");
 const githubService = require("./services/githubService");
 const secureDependencyService = require("./services/secureDependencies");
 const { scanDependencies } = require("./services/securityScanner");
 const { scanWithGemini } = require("./services/geminiScanner");
+const fs = require("fs");
+const FormData = require("form-data");
 
 // Load environment variables
 dotenv.config();
 
-// Initialize Express app
-const app = express();
+const VIRUSTOTAL_API_KEY = process.env.VIRUSTOTAL_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Ensure API keys are set
+// if (!VIRUSTOTAL_API_KEY) {
+//   console.error("❌ Missing VirusTotal API key! Set VIRUSTOTAL_API_KEY in your .env file.");
+//   process.exit(1);
+// }
+if (!GEMINI_API_KEY) {
+  console.error("❌ Missing Gemini API key! Set GEMINI_API_KEY in your .env file.");
+  process.exit(1);
+}
 
 /**
  * Function: Scan for malware using VirusTotal API
  */
-const scanForMalware = async (fileContent) => {
+const scanForMalware = async (filePath) => {
   try {
-    const response = await axios.post("https://www.virustotal.com/api/v3/files", fileContent, {
+    const fileStream = fs.createReadStream(filePath);
+    const form = new FormData();
+    form.append("file", fileStream);
+
+    const response = await axios.post("https://www.virustotal.com/api/v3/files", form, {
       headers: {
-        "x-apikey": process.env.VIRUSTOTAL_API_KEY,
+        "x-apikey": VIRUSTOTAL_API_KEY,
+        ...form.getHeaders(),
       },
     });
+
     return response.data;
   } catch (error) {
-    console.error("❌ Malware scan failed:", error);
+    console.error("❌ Malware scan failed:", error.response?.data || error.message);
     return null;
   }
 };
 
 /**
- * Endpoint: Scan Repository, Detect Malware, and Fix Vulnerabilities
+ * Main function: Scan repository, detect malware, and fix vulnerabilities
  */
-app.post("/scan", async (req, res) => {
-  const { repoUrl } = req.body;
+const scanRepository = async (repoUrl) => {
   if (!repoUrl) {
-    return res.status(400).json({ error: "❌ GitHub URL is required" });
+    console.error("❌ GitHub URL is required");
+    process.exit(1);
   }
 
   try {
     console.log(`🚀 Processing repository: ${repoUrl}`);
     const { owner, repo } = githubService.extractRepoDetails(repoUrl);
     console.log(`📂 Repository: ${owner}/${repo}`);
-    
+
     // Fetch dependency files
     const dependencyFiles = await githubService.fetchDependencyFiles(owner, repo);
     if (dependencyFiles.length === 0) {
-      return res.status(404).json({
-        status: "warning",
-        message: "⚠️ No dependency files found in the repository",
-        repoUrl,
-        owner,
-        repo,
-      });
+      console.warn("⚠️ No dependency files found in the repository");
+      return;
     }
-    
-    // Process all dependency files
-    const results = [];
+
     for (const file of dependencyFiles) {
       console.log(`🔍 Processing ${file.name}...`);
 
-      // 1. Malware Detection using VirusTotal
+      // Write content to a temporary file for scanning
+      const tempFilePath = `./temp_${file.name}`;
+      fs.writeFileSync(tempFilePath, file.content);
+
+      // 1. Malware Detection
       console.log(`🛡️ Scanning ${file.name} for malware...`);
-      const malwareResult = await scanForMalware(file.content);
+      const malwareResult = await scanForMalware(tempFilePath);
+      fs.unlinkSync(tempFilePath); // Delete temp file after scanning
+
       if (malwareResult && malwareResult.data.attributes.last_analysis_stats.malicious > 0) {
-        return res.status(403).json({
-          error: "❌ Malware detected in dependencies!",
-          details: malwareResult.data.attributes.last_analysis_stats,
-        });
+        console.error("❌ Malware detected in dependencies!");
+        process.exit(1);
       }
 
-      // 2. AI-based Code Analysis using Gemini
+      // 2. AI-based Code Analysis
       console.log(`🤖 AI Analysis for ${file.name}...`);
       const aiAnalysis = await scanWithGemini(file.content);
-      console.log(`🔍 AI Report:\n${aiAnalysis}`);
+      console.log(`🔍 AI Report:\n${JSON.stringify(aiAnalysis, null, 2)}`);
 
       // 3. Scan for vulnerabilities
       const vulnerabilities = await scanDependencies(file.name, file.content);
       console.log(`🔎 Found ${vulnerabilities.length} vulnerabilities in ${file.name}`);
 
-      // 4. Only fetch secure versions if vulnerabilities were found
-      let secureVersions = [];
-      let updatedContent = null;
-      
+      // 4. Secure Dependencies
       if (vulnerabilities.length > 0) {
         console.log(`🔒 Fetching secure dependencies for ${file.name}...`);
-        secureVersions = await secureDependencyService.fetchSecureDependencies(file.name, file.content);
-        updatedContent = secureDependencyService.generateSecureFile(file.name, file.content, secureVersions);
+        const secureVersions = await secureDependencyService.fetchSecureDependencies(file.name, file.content);
+        console.log("✅ Suggested Secure Versions:", secureVersions);
       }
-      
-      // 5. Add to results
-      results.push({
-        fileName: file.name,
-        aiAnalysis,
-        vulnerabilities,
-        secureVersions,
-        updatedContent,
-        summary: {
-          totalVulnerabilities: vulnerabilities.length,
-          totalDependencies: secureVersions.length,
-          needsUpdate: secureVersions.filter(dep => !dep.isSecure).length,
-        },
-      });
     }
-    
-    // Return combined results
-    res.status(200).json({
-      status: "success",
-      message: "✅ Repository scanning complete, including AI-based malware detection",
-      repoUrl,
-      owner,
-      repo,
-      results,
-      summary: {
-        totalFiles: dependencyFiles.length,
-        totalVulnerabilities: results.reduce((sum, r) => sum + r.vulnerabilities.length, 0),
-        status: results.some(r => r.vulnerabilities.length > 0) ? "vulnerable" : "secure",
-      },
-    });
+
+    console.log("✅ Repository scanning complete!");
   } catch (error) {
-    console.error("❌ Error processing repository:", error);
-    res.status(500).json({
-      error: "❌ Failed to scan and fix repository",
-      details: error.message,
-    });
+    console.error("❌ Error processing repository:", error.message);
+    process.exit(1);
   }
-});
+};
 
-/**
- * Endpoint: Health Check
- */
-app.get("/health", (req, res) => {
-  res.json({ status: "healthy" });
-});
+// Setup CLI commands
+program
+  .version("1.0.0")
+  .description("CLI tool to scan GitHub repositories for vulnerabilities and malware")
+  .argument("<repoUrl>", "GitHub repository URL")
+  .action(scanRepository);
 
-// Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
-
-module.exports = app;
+program.parse(process.argv);
